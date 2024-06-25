@@ -1,0 +1,132 @@
+from flask import Flask, request, render_template, redirect, url_for
+import os
+from werkzeug.utils import secure_filename
+import cv2
+import torch
+
+app = Flask(__name__)
+app.config['UPLOAD_FOLDER'] = 'static/processed_video'
+app.config['ALLOWED_EXTENSIONS'] = {'mp4', 'avi', 'mov', 'mkv'}
+model = torch.hub.load('ultralytics/yolov5', 'custom', path='best.pt')
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
+
+def bg_movement(frame, threshold, kernel, object_detector, roi_x, roi_y, roi_height, roi_width):
+    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    blurred_frame = cv2.GaussianBlur(frame, (5, 5), 0)
+    mask = object_detector.apply(blurred_frame)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    roi_mask = mask[roi_y:roi_y + roi_height, roi_x:roi_x + roi_width]
+    movement = cv2.countNonZero(roi_mask)
+    return movement > threshold
+
+def movement_detection(input_video_path, output_video_path,model):
+    print("loading model")
+    # model = load_model('best.pt')
+    
+    cap = cv2.VideoCapture(input_video_path)
+    num_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    roi_x = 250
+    roi_y = 200
+    roi_width = 500
+    roi_height = frame_height - roi_y
+
+    fourcc = cv2.VideoWriter_fourcc(*'MP4V')
+    object_detector = cv2.createBackgroundSubtractorMOG2()
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    video_writer = cv2.VideoWriter(output_video_path, fourcc, int(cap.get(cv2.CAP_PROP_FPS)), (frame_width, frame_height))
+
+    initial_height = None
+
+    for frame_index in range(num_frames):
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        movement = bg_movement(frame, 8000, kernel, object_detector, roi_x, roi_y, roi_height, roi_width)
+
+        text_x = frame_width - 200
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+        results = model(frame_rgb)
+        max_area = 0
+        max_box = None
+
+        for result in results.xyxy[0]:  # xyxy format
+            x_min, y_min, x_max, y_max, confidence, class_id = result.tolist()
+            area = (x_max - x_min) * (y_max - y_min)
+            if area > max_area:
+                max_area = area
+                max_box = (x_min, y_min, x_max, y_max)
+
+        center_x = center_y = height = height_diff = 0
+        state = "idle"
+
+        if max_box:
+            x_min, y_min, x_max, y_max = [int(coord) for coord in max_box]
+            center_x = (x_min + x_max) // 2
+            center_y = (y_min + y_max) // 2
+            height = y_max - y_min
+
+            if initial_height is None:
+                initial_height = height
+
+            height_diff = abs(height - initial_height)
+
+            if height_diff > 20 or movement:
+                state = 'working'
+            elif height_diff >= 2 and height_diff < 10 or movement:
+                state = 'moving'
+
+        print(f"Frame {frame_index} : {state}")
+
+        cv2.putText(frame, f'State: {state}', (text_x, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2, cv2.LINE_AA)
+        if max_box:
+            cv2.circle(frame, (center_x, center_y), 5, (0, 0, 255), -1)
+            cv2.putText(frame, f'Height: {int(height)}', (center_x, center_y - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2, cv2.LINE_AA)
+        cv2.rectangle(frame, (roi_x, roi_y), (roi_x + roi_width, roi_y + roi_height), (255, 0, 0), 2)
+        
+        video_writer.write(frame)
+
+    cap.release()
+    video_writer.release()
+
+@app.route('/')
+def upload_form():
+    return render_template('upload.html')
+
+@app.route('/upload', methods=['POST'])
+def upload_video():
+    if 'file' not in request.files:
+        return redirect(request.url)
+    file = request.files['file']
+    if file.filename == '':
+        return redirect(request.url)
+    if file and allowed_file(file.filename):
+        filename = secure_filename(file.filename)
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        file.save(filepath)
+
+        # Process the video for movement detection
+        output_filename = 'processed_' + filename
+        output_filepath = os.path.join(app.config['UPLOAD_FOLDER'], output_filename)
+        movement_detection(filepath, output_filepath,model)
+
+        return redirect(url_for('show_video', filename=output_filename))
+    return 'Invalid file', 400
+
+@app.route('/show_video/<filename>')
+def show_video(filename):
+    video_path = url_for('static', filename='processed_video/' + filename)
+    print(f"Video path: {video_path}")
+    return render_template('show_video.html', filename=filename)
+
+if __name__ == '__main__':
+    if not os.path.exists(app.config['UPLOAD_FOLDER']):
+        os.makedirs(app.config['UPLOAD_FOLDER'])
+    app.run(debug=True)
