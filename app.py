@@ -1,4 +1,4 @@
-from flask import Flask, request, render_template, redirect, url_for
+from flask import Flask, request, render_template, send_file, jsonify
 import os
 from werkzeug.utils import secure_filename
 import cv2
@@ -112,10 +112,10 @@ def upload_form():
 @app.route('/upload', methods=['POST'])
 def upload_video():
     if 'file' not in request.files:
-        return redirect(request.url)
+        return jsonify({'error': 'No file part'}), 400
     file = request.files['file']
     if file.filename == '':
-        return redirect(request.url)
+        return jsonify({'error': 'No selected file'}), 400
     if file and allowed_file(file.filename):
         filename = secure_filename(file.filename)
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
@@ -125,14 +125,19 @@ def upload_video():
         output_filepath = os.path.join(app.config['UPLOAD_FOLDER'], output_filename)
         movement_detection(filepath, output_filepath, model)
 
-        return redirect(url_for('show_video', filename=output_filename))
-    return 'Invalid file', 400
+        cap = cv2.VideoCapture(filepath)
+        ret, frame = cap.read()
+        if ret:
+            thumbnail_path = os.path.join(app.config['UPLOAD_FOLDER'], 'thumbnail_' + filename + '.jpg')
+            cv2.imwrite(thumbnail_path, frame)
+        cap.release()
 
-@app.route('/show_video/<filename>')
-def show_video(filename):
-    video_path = url_for('static', filename='processed_video/' + filename)
-    print(f"Video path: {video_path}")
-    return render_template('show_video.html', filename=filename)
+        return jsonify({'filename': output_filename, 'thumbnail': 'thumbnail_' + filename + '.jpg'}), 200
+    return jsonify({'error': 'Invalid file format'}), 400
+
+@app.route('/download/<filename>')
+def download_file(filename):
+    return send_file(os.path.join(app.config['UPLOAD_FOLDER'], filename), as_attachment=True)
 
 if __name__ == '__main__':
     if not os.path.exists(app.config['UPLOAD_FOLDER']):
