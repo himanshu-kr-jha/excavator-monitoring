@@ -8,6 +8,7 @@ app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'static/processed_video'
 app.config['ALLOWED_EXTENSIONS'] = {'mp4', 'avi', 'mov', 'mkv'}
 model = torch.hub.load('ultralytics/yolov5', 'custom', path='best.pt')
+
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
 
@@ -21,9 +22,8 @@ def bg_movement(frame, threshold, kernel, object_detector, roi_x, roi_y, roi_hei
     movement = cv2.countNonZero(roi_mask)
     return movement > threshold
 
-def movement_detection(input_video_path, output_video_path,model):
+def movement_detection(input_video_path, output_video_path, model):
     print("loading model")
-    # model = load_model('best.pt')
     
     cap = cv2.VideoCapture(input_video_path)
     num_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -40,13 +40,14 @@ def movement_detection(input_video_path, output_video_path,model):
     video_writer = cv2.VideoWriter(output_video_path, fourcc, int(cap.get(cv2.CAP_PROP_FPS)), (frame_width, frame_height))
 
     initial_height = None
+    previous_height = None
 
     for frame_index in range(num_frames):
         ret, frame = cap.read()
         if not ret:
             break
 
-        movement = bg_movement(frame, 8000, kernel, object_detector, roi_x, roi_y, roi_height, roi_width)
+        movement = bg_movement(frame, 9000, kernel, object_detector, roi_x, roi_y, roi_height, roi_width)
 
         text_x = frame_width - 200
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -55,7 +56,7 @@ def movement_detection(input_video_path, output_video_path,model):
         max_area = 0
         max_box = None
 
-        for result in results.xyxy[0]:  # xyxy format
+        for result in results.xyxy[0]:
             x_min, y_min, x_max, y_max, confidence, class_id = result.tolist()
             area = (x_max - x_min) * (y_max - y_min)
             if area > max_area:
@@ -63,7 +64,6 @@ def movement_detection(input_video_path, output_video_path,model):
                 max_box = (x_min, y_min, x_max, y_max)
 
         center_x = center_y = height = height_diff = 0
-        state = "idle"
 
         if max_box:
             x_min, y_min, x_max, y_max = [int(coord) for coord in max_box]
@@ -75,11 +75,20 @@ def movement_detection(input_video_path, output_video_path,model):
                 initial_height = height
 
             height_diff = abs(height - initial_height)
-
-            if height_diff > 20 or movement:
-                state = 'working'
-            elif height_diff >= 2 and height_diff < 10 or movement:
-                state = 'moving'
+            state = 0
+            if previous_height is not None:
+                continuous_height_diff = abs(height - previous_height)
+                if continuous_height_diff > 5 and movement:
+                    state = 1
+                if height_diff < 5 and not movement:
+                    state = 0
+            else:
+                if height_diff < 5 and not movement:
+                    state = 0
+                if height_diff > 5 or movement:
+                    state = 1
+                
+            previous_height = height
 
         print(f"Frame {frame_index} : {state}")
 
@@ -112,10 +121,9 @@ def upload_video():
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(filepath)
 
-        # Process the video for movement detection
         output_filename = 'processed_' + filename
         output_filepath = os.path.join(app.config['UPLOAD_FOLDER'], output_filename)
-        movement_detection(filepath, output_filepath,model)
+        movement_detection(filepath, output_filepath, model)
 
         return redirect(url_for('show_video', filename=output_filename))
     return 'Invalid file', 400
