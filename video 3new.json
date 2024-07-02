@@ -1,0 +1,11 @@
+{
+    "video_file": "video 3new",
+    "result": [
+        {
+            "interval": 0,
+            "state": "working",
+            "probability": 0.9919463087248322
+        }
+    ],
+    "overall_state": "working"
+}

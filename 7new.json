@@ -1,0 +1,16 @@
+{
+    "video_file": "7new",
+    "result": [
+        {
+            "interval": 0,
+            "state": "idle",
+            "probability": 0.8952380952380953
+        },
+        {
+            "interval": 1,
+            "state": "idle",
+            "probability": 0.8732057416267942
+        }
+    ],
+    "overall_state": "idle"
+}

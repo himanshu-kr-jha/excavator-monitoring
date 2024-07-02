@@ -1,0 +1,16 @@
+{
+    "video_file": "8new",
+    "result": [
+        {
+            "interval": 0,
+            "state": "working",
+            "probability": 0.671990171990172
+        },
+        {
+            "interval": 1,
+            "state": "idle",
+            "probability": 0.6706443914081146
+        }
+    ],
+    "overall_state": "working"
+}

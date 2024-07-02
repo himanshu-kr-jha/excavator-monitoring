@@ -1,0 +1,11 @@
+{
+    "video_file": "1new",
+    "result": [
+        {
+            "interval": 0,
+            "state": "idle",
+            "probability": 0.8205445544554455
+        }
+    ],
+    "overall_state": "idle"
+}
